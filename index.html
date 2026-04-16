@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>投资复利计算器</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="control-panel">
+        <div class="panel-card hero-card">
+          <p class="eyebrow">Investment Growth Studio</p>
+          <h1>投资复利计算器</h1>
+          <p class="panel-copy">
+            输入本金、年限、定投与年化收益率，实时查看每年的本金积累、收益变化与收益率表现。
+          </p>
+        </div>
+
+        <form id="calculator-form" class="panel-card form-card" autocomplete="off">
+          <div class="section-title-row">
+            <h2>参数设置</h2>
+            <button id="reset-button" type="button" class="text-button">恢复默认</button>
+          </div>
+
+          <label class="field">
+            <span>投资本金（元）</span>
+            <input id="initialAmount" name="initialAmount" type="number" min="0" step="1000" value="100000" />
+          </label>
+
+          <label class="field">
+            <span>投资年限</span>
+            <input id="years" name="years" type="number" min="1" max="50" step="1" value="20" />
+          </label>
+
+          <label class="field">
+            <span>单次定投金额（元）</span>
+            <input id="contributionAmount" name="contributionAmount" type="number" min="0" step="100" value="2000" />
+          </label>
+
+          <div class="field">
+            <span>定投频率</span>
+            <div class="pill-group" data-group="contributionFrequency">
+              <button type="button" class="pill is-active" data-value="monthly">按月</button>
+              <button type="button" class="pill" data-value="yearly">按年</button>
+            </div>
+            <input id="contributionFrequency" name="contributionFrequency" type="hidden" value="monthly" />
+          </div>
+
+          <label class="field">
+            <span>预计年化收益率（%）</span>
+            <input id="annualRate" name="annualRate" type="number" min="-50" max="80" step="0.1" value="8" />
+          </label>
+
+          <div class="advanced-grid">
+            <div class="field">
+              <span>定投时点</span>
+              <div class="pill-group" data-group="contributionTiming">
+                <button type="button" class="pill is-active" data-value="start">期初投入</button>
+                <button type="button" class="pill" data-value="end">期末投入</button>
+              </div>
+              <input id="contributionTiming" name="contributionTiming" type="hidden" value="start" />
+            </div>
+
+            <label class="field">
+              <span>情景波动区间（±%）</span>
+              <input id="scenarioSpread" name="scenarioSpread" type="number" min="0" max="15" step="0.1" value="2" />
+            </label>
+          </div>
+
+          <div class="assumption-note">
+            <p>计算假设</p>
+            <ul>
+              <li>采用固定年化收益率，并换算为等效月收益率进行逐月模拟。</li>
+              <li>情景对比默认以基准收益率为中心，生成保守与乐观两条曲线。</li>
+              <li>结果未包含税费、申赎费用、通胀与回撤波动。</li>
+            </ul>
+          </div>
+        </form>
+      </aside>
+
+      <main class="dashboard">
+        <section class="metrics-grid" id="metricsGrid" aria-label="结果摘要">
+          <article class="metric-card">
+            <span class="metric-label">最终总资产</span>
+            <strong id="metricFinalValue">¥0</strong>
+            <small id="metricFinalCaption">基准情景</small>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">累计本金</span>
+            <strong id="metricPrincipal">¥0</strong>
+            <small id="metricPrincipalCaption">初始本金 + 全部定投</small>
+          </article>
+          <article class="metric-card accent-card">
+            <span class="metric-label">累计收益</span>
+            <strong id="metricProfit">¥0</strong>
+            <small id="metricProfitCaption">复利带来的净增值</small>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">累计收益率</span>
+            <strong id="metricReturnRate">0%</strong>
+            <small id="metricReturnCaption">累计收益 / 累计本金</small>
+          </article>
+        </section>
+
+        <section class="panel-card chart-card">
+          <div class="chart-header">
+            <div>
+              <p class="eyebrow">Visual Projection</p>
+              <h2>年度资产轨迹</h2>
+            </div>
+
+            <div class="chart-controls">
+              <div class="pill-group compact" data-group="chartMode">
+                <button type="button" class="pill is-active" data-value="breakdown">资产拆解</button>
+                <button type="button" class="pill" data-value="scenario">情景对比</button>
+              </div>
+              <input id="chartMode" type="hidden" value="breakdown" />
+            </div>
+          </div>
+
+          <div class="scenario-strip" id="scenarioStrip" aria-label="情景总览"></div>
+
+          <div class="legend-row" id="chartLegend" aria-label="图表图例"></div>
+
+          <div class="chart-surface" id="chartSurface">
+            <svg id="projectionChart" role="img" aria-label="投资资产变化图表"></svg>
+            <div class="chart-tooltip" id="chartTooltip" hidden></div>
+          </div>
+
+          <div class="chart-footer">
+            <span>悬停曲线查看对应年份的详细数值</span>
+            <span id="chartModeHint">当前视图：资产拆解</span>
+          </div>
+        </section>
+
+        <section class="panel-card table-card">
+          <div class="table-header">
+            <div>
+              <p class="eyebrow">Yearly Schedule</p>
+              <h2>年度明细</h2>
+            </div>
+            <button id="exportButton" type="button" class="text-button solid-button">导出 CSV</button>
+          </div>
+
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>年份</th>
+                  <th>年初资产</th>
+                  <th>本年投入</th>
+                  <th>累计本金</th>
+                  <th>本年收益</th>
+                  <th>累计收益</th>
+                  <th>年末总资产</th>
+                  <th>累计收益率</th>
+                </tr>
+              </thead>
+              <tbody id="yearlyTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
