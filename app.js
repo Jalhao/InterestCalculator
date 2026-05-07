@@ -30,6 +30,7 @@ const defaults = {
   scenarioSpread: 2,
   chartMode: "breakdown",
   targetAmount: 3000000,
+  inflationRate: 2.5,
   backtestDataset: "sp500",
   backtestStartYear: "2010",
 };
@@ -86,6 +87,10 @@ const elements = {
   metricPrincipalCaption: document.getElementById("metricPrincipalCaption"),
   metricProfitCaption: document.getElementById("metricProfitCaption"),
   metricReturnCaption: document.getElementById("metricReturnCaption"),
+  metricRealValue: document.getElementById("metricRealValue"),
+  metricRealCaption: document.getElementById("metricRealCaption"),
+  metricInflationDrag: document.getElementById("metricInflationDrag"),
+  metricInflationCaption: document.getElementById("metricInflationCaption"),
   goalTargetValue: document.getElementById("goalTargetValue"),
   goalTargetCaption: document.getElementById("goalTargetCaption"),
   goalRequiredContribution: document.getElementById("goalRequiredContribution"),
@@ -103,6 +108,7 @@ const elements = {
   scenarioSpread: document.getElementById("scenarioSpread"),
   chartMode: document.getElementById("chartMode"),
   targetAmount: document.getElementById("targetAmount"),
+  inflationRate: document.getElementById("inflationRate"),
   backtestDataset: document.getElementById("backtestDataset"),
   backtestStartYear: document.getElementById("backtestStartYear"),
 };
@@ -131,6 +137,10 @@ const tones = {
   benchmark: {
     color: "#5d7085",
     fill: "rgba(93, 112, 133, 0.12)",
+  },
+  real: {
+    color: "#6d4fc2",
+    fill: "rgba(109, 79, 194, 0.12)",
   },
   profitPositive: {
     color: "#c6922a",
@@ -209,6 +219,33 @@ function annualToMonthlyRate(annualRateDecimal) {
   return Math.pow(1 + clamp(annualRateDecimal, -0.99, 5), 1 / 12) - 1;
 }
 
+function getInflationFactor(inputs, year) {
+  return Math.pow(1 + clamp(inputs.inflationRate / 100, -0.95, 3), year);
+}
+
+function addRealPurchasingPower(row, inputs) {
+  const inflationFactor = getInflationFactor(inputs, row.year);
+  const realYearStartBalance = row.yearStartBalance / inflationFactor;
+  const realAnnualContribution = row.annualContribution / inflationFactor;
+  const realCumulativePrincipal = row.cumulativePrincipal;
+  const realAnnualInterest = row.annualInterest / inflationFactor;
+  const realEndBalance = row.endBalance / inflationFactor;
+  const realCumulativeProfit = realEndBalance - row.cumulativePrincipal;
+
+  return {
+    ...row,
+    inflationFactor,
+    realYearStartBalance,
+    realAnnualContribution,
+    realCumulativePrincipal,
+    realAnnualInterest,
+    realEndBalance,
+    realCumulativeProfit,
+    realCumulativeReturn: safeRatio(realCumulativeProfit, realCumulativePrincipal),
+    purchasingPowerDrag: row.endBalance - realEndBalance,
+  };
+}
+
 function shouldContributeForMonth(inputs, month) {
   const isMonthlyContribution = inputs.contributionFrequency === "monthly";
   const isYearlyAtStart = inputs.contributionFrequency === "yearly" && inputs.contributionTiming === "start" && month === 1;
@@ -228,19 +265,24 @@ function simulateAnnualSeries(inputs, annualRates, yearLabels = []) {
   let cumulativePrincipal = inputs.initialAmount;
   let benchmarkGrowth = 1;
 
-  rows.push({
-    year: 0,
-    calendarYear: null,
-    yearStartBalance: inputs.initialAmount,
-    annualContribution: 0,
-    cumulativePrincipal,
-    annualInterest: 0,
-    annualMarketReturn: 0,
-    benchmarkGrowth,
-    cumulativeProfit: balance - cumulativePrincipal,
-    endBalance: balance,
-    cumulativeReturn: safeRatio(balance - cumulativePrincipal, cumulativePrincipal),
-  });
+  rows.push(
+    addRealPurchasingPower(
+      {
+        year: 0,
+        calendarYear: null,
+        yearStartBalance: inputs.initialAmount,
+        annualContribution: 0,
+        cumulativePrincipal,
+        annualInterest: 0,
+        annualMarketReturn: 0,
+        benchmarkGrowth,
+        cumulativeProfit: balance - cumulativePrincipal,
+        endBalance: balance,
+        cumulativeReturn: safeRatio(balance - cumulativePrincipal, cumulativePrincipal),
+      },
+      inputs
+    )
+  );
 
   annualRates.forEach((annualRate, index) => {
     const yearStartBalance = balance;
@@ -270,19 +312,24 @@ function simulateAnnualSeries(inputs, annualRates, yearLabels = []) {
     benchmarkGrowth *= 1 + annualRate;
     const cumulativeProfit = balance - cumulativePrincipal;
 
-    rows.push({
-      year: index + 1,
-      calendarYear: yearLabels[index] || null,
-      yearStartBalance,
-      annualContribution,
-      cumulativePrincipal,
-      annualInterest,
-      annualMarketReturn: annualRate,
-      benchmarkGrowth,
-      cumulativeProfit,
-      endBalance: balance,
-      cumulativeReturn: safeRatio(cumulativeProfit, cumulativePrincipal),
-    });
+    rows.push(
+      addRealPurchasingPower(
+        {
+          year: index + 1,
+          calendarYear: yearLabels[index] || null,
+          yearStartBalance,
+          annualContribution,
+          cumulativePrincipal,
+          annualInterest,
+          annualMarketReturn: annualRate,
+          benchmarkGrowth,
+          cumulativeProfit,
+          endBalance: balance,
+          cumulativeReturn: safeRatio(cumulativeProfit, cumulativePrincipal),
+        },
+        inputs
+      )
+    );
   });
 
   const averageAnnualReturn = sampleDescriptors.length
@@ -480,6 +527,7 @@ function generateInsights(inputs, projection, goalAnalysis) {
   const lateStageStartIndex = clamp(Math.ceil(rows.length * (2 / 3)), 1, rows.length - 1);
   const lateStageProfit = finalRow.cumulativeProfit - rows[lateStageStartIndex - 1].cumulativeProfit;
   const lateStageShare = finalRow.cumulativeProfit > 0 ? safeRatio(lateStageProfit, finalRow.cumulativeProfit) : 0;
+  const purchasingPowerDragRatio = safeRatio(finalRow.purchasingPowerDrag, finalRow.endBalance);
 
   const insights = [
     {
@@ -504,6 +552,12 @@ function generateInsights(inputs, projection, goalAnalysis) {
       metric: formatPercent(finalProfitShare),
       tone: finalProfitShare >= 0.45 ? "positive" : "neutral",
       body: `最终资产中约 ${formatPercent(finalProfitShare)} 来自收益，约 ${formatPercent(finalPrincipalShare)} 来自累计本金。`,
+    },
+    {
+      title: "真实购买力",
+      metric: formatCurrency(finalRow.realEndBalance),
+      tone: finalRow.realCumulativeProfit >= 0 ? "positive" : "warning",
+      body: `按 ${formatPercent(inputs.inflationRate / 100)} 年通胀折现后，名义终值约相当于今天的 ${formatCurrency(finalRow.realEndBalance)}，购买力折损约 ${formatPercent(purchasingPowerDragRatio)}。`,
     },
   ];
 
@@ -582,6 +636,7 @@ function sanitizeInputs() {
     scenarioSpread: clamp(Math.abs(toNumber(elements.scenarioSpread.value, defaults.scenarioSpread)), 0, 15),
     chartMode: elements.chartMode.value === "comparison" ? "comparison" : "breakdown",
     targetAmount: Math.max(0, Math.round(toNumber(elements.targetAmount.value, defaults.targetAmount))),
+    inflationRate: clamp(toNumber(elements.inflationRate.value, defaults.inflationRate), -10, 30),
     backtestDataset: Object.prototype.hasOwnProperty.call(HISTORICAL_DATASETS, elements.backtestDataset.value)
       ? elements.backtestDataset.value
       : defaults.backtestDataset,
@@ -594,6 +649,7 @@ function sanitizeInputs() {
   elements.annualRate.value = String(parsed.annualRate);
   elements.scenarioSpread.value = String(parsed.scenarioSpread);
   elements.targetAmount.value = String(parsed.targetAmount);
+  elements.inflationRate.value = String(parsed.inflationRate);
 
   state.inputs = parsed;
   return parsed;
@@ -605,7 +661,7 @@ function renderAssumptions(inputs, projection) {
     elements.assumptionList.innerHTML = `
       <li>历史回测基于内置年度收益样本，并按所选年份顺序逐年回放。</li>
       <li>当前回测区间为 ${projection.backtest.startYear}-${projection.backtest.endYear}，共 ${projection.backtest.effectiveYears} 个年度样本。</li>
-      <li>结果仍未包含税费、滑点、交易成本与分红再投资细节，适合作为策略直觉演示。</li>
+      <li>实际购买力按 ${formatPercent(inputs.inflationRate / 100)} 年通胀率折现为今天价值；结果仍未包含税费、滑点、交易成本与分红再投资细节。</li>
     `;
     return;
   }
@@ -614,7 +670,8 @@ function renderAssumptions(inputs, projection) {
   elements.assumptionList.innerHTML = `
     <li>采用固定年化收益率，并换算为等效月收益率进行逐月模拟。</li>
     <li>情景对比默认以基准收益率为中心，生成保守与乐观两条曲线。</li>
-    <li>目标反推基于基准情景计算，结果未包含税费、申赎费用、通胀与回撤波动。</li>
+    <li>实际购买力按 ${formatPercent(inputs.inflationRate / 100)} 年通胀率折现为今天价值，目标反推仍按名义终值计算。</li>
+    <li>结果未包含税费、申赎费用与回撤波动。</li>
   `;
 }
 
@@ -660,6 +717,10 @@ function updateMetrics() {
   elements.metricPrincipal.textContent = formatCurrency(finalRow.cumulativePrincipal);
   elements.metricProfit.textContent = formatCurrency(finalRow.cumulativeProfit);
   elements.metricReturnRate.textContent = formatPercent(finalRow.cumulativeReturn);
+  elements.metricRealValue.textContent = formatCurrency(finalRow.realEndBalance);
+  elements.metricInflationDrag.textContent = formatCurrency(finalRow.purchasingPowerDrag);
+  elements.metricRealCaption.textContent = `按 ${formatPercent(inputs.inflationRate / 100)} 年通胀折现`;
+  elements.metricInflationCaption.textContent = `${inputs.years} 年累计购买力折损`;
   elements.metricPrincipalCaption.textContent = `初始本金 + ${getContributionCadenceLabel(inputs)}`;
   elements.metricReturnCaption.textContent = "累计收益 / 累计本金";
 
@@ -673,6 +734,7 @@ function updateMetrics() {
 
   elements.metricProfit.classList.toggle("negative", finalRow.cumulativeProfit < 0);
   elements.metricReturnRate.classList.toggle("negative", finalRow.cumulativeReturn < 0);
+  elements.metricRealValue.classList.toggle("negative", finalRow.realEndBalance < finalRow.cumulativePrincipal);
 }
 
 function renderGoalSection() {
@@ -723,6 +785,8 @@ function renderTable() {
           <td class="${annualReturnClass}">${formatPercent(row.annualMarketReturn)}</td>
           <td class="${profitClass}">${formatCurrency(row.cumulativeProfit)}</td>
           <td>${formatCurrency(row.endBalance)}</td>
+          <td>${formatCurrency(row.realEndBalance)}</td>
+          <td class="${row.realCumulativeProfit >= 0 ? "positive" : "negative"}">${formatCurrency(row.realCumulativeProfit)}</td>
           <td class="${profitClass}">${formatPercent(row.cumulativeReturn)}</td>
         </tr>
       `;
@@ -764,6 +828,15 @@ function getBreakdownSeries() {
         fill: profitTone.fill,
         values: rows.map((row) => row.cumulativeProfit),
         strokeWidth: 2.2,
+      },
+      {
+        key: "realEndBalance",
+        label: "实际购买力",
+        color: tones.real.color,
+        fill: tones.real.fill,
+        values: rows.map((row) => row.realEndBalance),
+        strokeWidth: 2.6,
+        dasharray: "4 7",
       },
     ],
   };
@@ -897,6 +970,8 @@ function buildTooltipContent(index) {
           <dd>${index === 0 ? "--" : formatPercent(row.annualMarketReturn)}</dd>
           <dt>组合总资产</dt>
           <dd>${formatCurrency(row.endBalance)}</dd>
+          <dt>实际购买力</dt>
+          <dd>${formatCurrency(row.realEndBalance)}</dd>
         </dl>
       `;
     }
@@ -912,7 +987,7 @@ function buildTooltipContent(index) {
 
     return `
       <h3>${index === 0 ? "初始状态" : `第 ${index} 年`}</h3>
-      <dl>${scenarioLines}</dl>
+      <dl>${scenarioLines}<dt>基准实际购买力</dt><dd>${formatCurrency(state.projection.base.rows[index].realEndBalance)}</dd></dl>
     `;
   }
 
@@ -922,6 +997,8 @@ function buildTooltipContent(index) {
     ["总资产", formatCurrency(row.endBalance)],
     ["累计本金", formatCurrency(row.cumulativePrincipal)],
     ["累计收益", formatCurrency(row.cumulativeProfit)],
+    ["实际购买力", formatCurrency(row.realEndBalance)],
+    ["实际累计收益", formatCurrency(row.realCumulativeProfit)],
     ["累计收益率", formatPercent(row.cumulativeReturn)],
   ];
 
@@ -1226,7 +1303,7 @@ function resetAll() {
 }
 
 function exportCsv() {
-  const headers = ["年份", "年初资产", "本年投入", "累计本金", "本年收益", "年度回报", "累计收益", "年末总资产", "累计收益率"];
+  const headers = ["年份", "年初资产", "本年投入", "累计本金", "本年收益", "年度回报", "累计收益", "年末总资产", "实际购买力", "实际累计收益", "累计收益率"];
   const lines = state.projection.base.rows.slice(1).map((row) =>
     [
       row.calendarYear || row.year,
@@ -1237,6 +1314,8 @@ function exportCsv() {
       (row.annualMarketReturn * 100).toFixed(2) + "%",
       row.cumulativeProfit.toFixed(2),
       row.endBalance.toFixed(2),
+      row.realEndBalance.toFixed(2),
+      row.realCumulativeProfit.toFixed(2),
       (row.cumulativeReturn * 100).toFixed(2) + "%",
     ].join(",")
   );
