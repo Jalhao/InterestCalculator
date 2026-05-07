@@ -92,6 +92,9 @@ const elements = {
   goalRequiredCaption: document.getElementById("goalRequiredCaption"),
   goalContributionGap: document.getElementById("goalContributionGap"),
   goalGapCaption: document.getElementById("goalGapCaption"),
+  goalHitTime: document.getElementById("goalHitTime"),
+  goalHitCaption: document.getElementById("goalHitCaption"),
+  goalMilestones: document.getElementById("goalMilestones"),
   goalSummaryText: document.getElementById("goalSummaryText"),
   calculationMode: document.getElementById("calculationMode"),
   initialAmount: document.getElementById("initialAmount"),
@@ -403,6 +406,77 @@ function calculateProjection(inputs) {
   };
 }
 
+
+function getPlanningHorizon(inputs) {
+  if (inputs.calculationMode === "backtest") {
+    const dataset = getDataset(inputs.backtestDataset);
+    const requestedStartYear = Number(inputs.backtestStartYear);
+    const startYear = dataset.years.includes(requestedStartYear) ? requestedStartYear : dataset.years[0];
+    const startIndex = Math.max(0, dataset.years.indexOf(startYear));
+    return dataset.years.length - startIndex;
+  }
+
+  return 50;
+}
+
+function findTargetHitRow(rows, targetAmount) {
+  if (targetAmount <= 0) {
+    return rows[0] || null;
+  }
+
+  return rows.find((row) => row.endBalance >= targetAmount) || null;
+}
+
+function formatGoalTime(row) {
+  if (!row) {
+    return "未达标";
+  }
+
+  if (row.year === 0) {
+    return "起点已达标";
+  }
+
+  return row.calendarYear ? `${row.calendarYear}` : `第 ${row.year} 年`;
+}
+
+function buildExtendedGoalRows(inputs, projection) {
+  const maxYears = getPlanningHorizon(inputs);
+  const currentYears = projection.base.finalRow.year;
+
+  if (maxYears <= currentYears) {
+    return null;
+  }
+
+  return calculateBaseSimulation({ ...inputs, years: maxYears }).rows;
+}
+
+function buildGoalMilestones(targetAmount, currentRows, extendedRows = []) {
+  if (targetAmount <= 0) {
+    return [];
+  }
+
+  const finalCurrentYear = currentRows[currentRows.length - 1]?.year ?? 0;
+  const lookupRows = extendedRows.length ? extendedRows : currentRows;
+
+  return [0.25, 0.5, 0.75, 1].map((ratio) => {
+    const amount = targetAmount * ratio;
+    const hitRow = findTargetHitRow(lookupRows, amount);
+    let status = "missing";
+
+    if (hitRow) {
+      status = hitRow.year <= finalCurrentYear ? "current" : "extended";
+    }
+
+    return {
+      ratio,
+      amount,
+      hitRow,
+      status,
+      label: `${Math.round(ratio * 100)}%`,
+    };
+  });
+}
+
 function solveRequiredContribution(inputs, projection) {
   const targetAmount = Math.max(0, inputs.targetAmount);
   const currentFinalBalance = projection.base.finalRow.endBalance;
@@ -441,14 +515,31 @@ function solveRequiredContribution(inputs, projection) {
   const contributionGap = requiredContribution - currentContribution;
   const targetGap = currentFinalBalance - targetAmount;
   const status = targetGap >= 0 ? "ahead" : "shortfall";
+  const currentRows = projection.base.rows;
+  const goalHitRow = findTargetHitRow(currentRows, targetAmount);
+  const extendedRows = goalHitRow ? [] : buildExtendedGoalRows(inputs, projection) || [];
+  const extendedGoalHitRow = goalHitRow ? null : findTargetHitRow(extendedRows, targetAmount);
+  const goalHitStatus = goalHitRow ? "current" : extendedGoalHitRow ? "extended" : "missing";
+  const milestones = buildGoalMilestones(targetAmount, currentRows, extendedRows);
+
+  let goalHitCaption = "当前期限内尚未达到目标";
+  if (goalHitStatus === "current") {
+    goalHitCaption = goalHitRow.year === 0 ? "初始本金已达到目标" : "按当前计划首次超过目标";
+  } else if (goalHitStatus === "extended") {
+    const maxYears = getPlanningHorizon(inputs);
+    goalHitCaption = `当前 ${projection.base.finalRow.year} 年内未达标，延长测算至 ${maxYears} 年可达标`;
+  }
 
   let summary;
+  const goalTimeText = formatGoalTime(goalHitRow || extendedGoalHitRow);
   if (targetAmount === 0) {
     summary = "当前目标为 0 元，因此无需额外定投即可达标。";
   } else if (status === "ahead" && requiredContribution === 0) {
     summary = `在 ${targetContext} 下，仅凭初始本金就有机会达到 ${formatCurrency(targetAmount)}，当前计划的结果将高于目标 ${formatCurrency(Math.abs(targetGap))}。`;
   } else if (status === "ahead") {
-    summary = `按 ${targetContext} 测算，你当前的 ${cadence} 定投计划有望超过目标 ${formatCurrency(Math.abs(targetGap))}；理论上把单次定投调到 ${formatCurrency(requiredContribution)} 仍可达标。`;
+    summary = `按 ${targetContext} 测算，你当前的 ${cadence} 定投计划有望在 ${goalTimeText} 达到目标，并在期末超过目标 ${formatCurrency(Math.abs(targetGap))}；理论上把单次定投调到 ${formatCurrency(requiredContribution)} 仍可达标。`;
+  } else if (extendedGoalHitRow) {
+    summary = `按 ${targetContext} 测算，当前期限内距离目标还差 ${formatCurrency(Math.abs(targetGap))}；若保持当前 ${cadence} 定投节奏并延长期限，预计可在 ${goalTimeText} 达到目标。`;
   } else {
     summary = `按 ${targetContext} 测算，你距离目标还差 ${formatCurrency(Math.abs(targetGap))}；若想在当前期限内达标，需要把 ${cadence} 定投提高到 ${formatCurrency(requiredContribution)}。`;
   }
@@ -463,6 +554,11 @@ function solveRequiredContribution(inputs, projection) {
     status,
     cadence,
     targetContext,
+    goalHitRow,
+    extendedGoalHitRow,
+    goalHitStatus,
+    goalHitCaption,
+    milestones,
     summary,
   };
 }
@@ -490,6 +586,16 @@ function generateInsights(inputs, projection, goalAnalysis) {
         goalAnalysis.status === "ahead"
           ? `当前计划预计高出目标 ${formatCurrency(Math.abs(goalAnalysis.targetGap))}，如果只想刚好达标，可把单次定投下调到 ${formatCurrency(goalAnalysis.requiredContribution)}。`
           : `当前计划预计仍差 ${formatCurrency(Math.abs(goalAnalysis.targetGap))}，要达标需要把单次定投提高到 ${formatCurrency(goalAnalysis.requiredContribution)}。`,
+    },
+    {
+      title: "达标时间",
+      metric: formatGoalTime(goalAnalysis.goalHitRow || goalAnalysis.extendedGoalHitRow),
+      tone: goalAnalysis.goalHitStatus === "missing" ? "warning" : "positive",
+      body: goalAnalysis.goalHitStatus === "current"
+        ? `当前计划预计在 ${formatGoalTime(goalAnalysis.goalHitRow)} 首次达到目标 ${formatCurrency(goalAnalysis.targetAmount)}。`
+        : goalAnalysis.goalHitStatus === "extended"
+          ? `当前期限内暂未达标，但保持投入节奏并延长期限，预计在 ${formatGoalTime(goalAnalysis.extendedGoalHitRow)} 达标。`
+          : `在可测算期限内尚未达到目标 ${formatCurrency(goalAnalysis.targetAmount)}，需要提高投入、延长期限或调整收益假设。`,
     },
     {
       title: "复利接棒年份",
@@ -684,10 +790,31 @@ function renderGoalSection() {
   elements.goalRequiredCaption.textContent = `按当前 ${goal.cadence} 节奏反推`;
   elements.goalContributionGap.textContent = formatSignedCurrency(goal.contributionGap);
   elements.goalGapCaption.textContent = "正数代表需要增加，负数代表可以减少";
+  elements.goalHitTime.textContent = formatGoalTime(goal.goalHitRow || goal.extendedGoalHitRow);
+  elements.goalHitCaption.textContent = goal.goalHitCaption;
   elements.goalSummaryText.textContent = goal.summary;
+  elements.goalMilestones.innerHTML = goal.milestones
+    .map((milestone) => {
+      const statusText = milestone.status === "current" ? formatGoalTime(milestone.hitRow) : milestone.status === "extended" ? `延长后 ${formatGoalTime(milestone.hitRow)}` : "未达成";
+      const progress = Math.min(milestone.ratio * 100, 100);
+
+      return `
+        <article class="milestone-item" data-status="${milestone.status}">
+          <div>
+            <span>${milestone.label} 目标</span>
+            <strong>${formatCurrency(milestone.amount)}</strong>
+          </div>
+          <small>${statusText}</small>
+          <span class="milestone-bar" aria-hidden="true"><i style="width: ${progress}%"></i></span>
+        </article>
+      `;
+    })
+    .join("");
 
   elements.goalContributionGap.classList.toggle("negative", goal.contributionGap > 0);
   elements.goalContributionGap.classList.toggle("positive", goal.contributionGap < 0);
+  elements.goalHitTime.classList.toggle("negative", goal.goalHitStatus === "missing");
+  elements.goalHitTime.classList.toggle("positive", goal.goalHitStatus !== "missing");
 }
 
 function renderInsights() {
@@ -925,6 +1052,10 @@ function buildTooltipContent(index) {
     ["累计收益率", formatPercent(row.cumulativeReturn)],
   ];
 
+  if (state.goalAnalysis.targetAmount > 0) {
+    details.push(["目标进度", formatPercent(Math.min(safeRatio(row.endBalance, state.goalAnalysis.targetAmount), 1))]);
+  }
+
   if (index > 0) {
     details.splice(2, 0, ["本年投入", formatCurrency(row.annualContribution)]);
     details.splice(4, 0, ["本年收益", formatCurrency(row.annualInterest)]);
@@ -1023,6 +1154,9 @@ function renderChart() {
   const pointsCount = chartData.rows.length;
   const xScale = (index) => left + (plotWidth * index) / Math.max(pointsCount - 1, 1);
   const allValues = visibleSeries.flatMap((series) => series.values);
+  if (chartData.mode === "breakdown" && state.goalAnalysis?.targetAmount > 0) {
+    allValues.push(state.goalAnalysis.targetAmount);
+  }
   const rawMin = Math.min(0, ...allValues);
   const rawMax = Math.max(0, ...allValues);
   const range = rawMax - rawMin || 1;
@@ -1074,6 +1208,40 @@ function renderChart() {
       y2: clamp(baselineY, top, height - bottom),
     })
   );
+
+  if (chartData.mode === "breakdown" && state.goalAnalysis?.targetAmount > 0) {
+    const targetY = yScale(state.goalAnalysis.targetAmount);
+    root.appendChild(
+      createSvgElement("line", {
+        class: "target-line",
+        x1: left,
+        y1: targetY,
+        x2: width - right,
+        y2: targetY,
+      })
+    );
+
+    const targetLabel = createSvgElement("text", {
+      class: "target-label",
+      x: width - right - 8,
+      y: targetY - 8,
+      "text-anchor": "end",
+    });
+    targetLabel.textContent = `目标 ${formatCompactCurrency(state.goalAnalysis.targetAmount)}`;
+    root.appendChild(targetLabel);
+
+    if (state.goalAnalysis.goalHitRow && state.goalAnalysis.goalHitRow.year < pointsCount) {
+      const hitX = xScale(state.goalAnalysis.goalHitRow.year);
+      root.appendChild(
+        createSvgElement("circle", {
+          class: "target-point",
+          cx: hitX,
+          cy: targetY,
+          r: 5,
+        })
+      );
+    }
+  }
 
   const xTickIndices = sampleIndices(pointsCount, width < 640 ? 4 : 6);
   xTickIndices.forEach((index) => {
