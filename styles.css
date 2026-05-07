@@ -16,6 +16,8 @@
   --gold-soft: rgba(198, 146, 42, 0.14);
   --red: #b64545;
   --red-soft: rgba(182, 69, 69, 0.14);
+  --purple: #6d4fc2;
+  --purple-soft: rgba(109, 79, 194, 0.14);
   --radius-xl: 30px;
   --radius-lg: 22px;
   --radius-md: 16px;
@@ -281,7 +283,7 @@ select {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
 }
 
@@ -309,6 +311,12 @@ select {
 .accent-card {
   background:
     radial-gradient(circle at top right, rgba(198, 146, 42, 0.14), transparent 38%),
+    var(--panel-strong);
+}
+
+.real-card {
+  background:
+    radial-gradient(circle at top right, var(--purple-soft), transparent 38%),
     var(--panel-strong);
 }
 
@@ -508,7 +516,7 @@ select {
 
 table {
   width: 100%;
-  min-width: 900px;
+  min-width: 1100px;
   border-collapse: collapse;
   background: rgba(255, 255, 255, 0.88);
 }

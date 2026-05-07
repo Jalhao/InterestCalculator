@@ -101,17 +101,24 @@
             </p>
           </div>
 
-          <label class="field">
-            <span>目标总资产（元）</span>
-            <input id="targetAmount" name="targetAmount" type="number" min="0" step="10000" value="3000000" />
-          </label>
+          <div class="advanced-grid">
+            <label class="field">
+              <span>目标总资产（元）</span>
+              <input id="targetAmount" name="targetAmount" type="number" min="0" step="10000" value="3000000" />
+            </label>
+
+            <label class="field">
+              <span>预计年通胀率（%）</span>
+              <input id="inflationRate" name="inflationRate" type="number" min="-10" max="30" step="0.1" value="2.5" />
+            </label>
+          </div>
 
           <div class="assumption-note">
             <p id="assumptionTitle">计算假设</p>
             <ul id="assumptionList">
               <li>采用固定年化收益率，并换算为等效月收益率进行逐月模拟。</li>
               <li>情景对比默认以基准收益率为中心，生成保守与乐观两条曲线。</li>
-              <li>结果未包含税费、申赎费用、通胀与回撤波动。</li>
+              <li>通胀率用于折算今天购买力，结果未包含税费、申赎费用与回撤波动。</li>
             </ul>
           </div>
         </form>
@@ -138,6 +145,16 @@
             <span class="metric-label">累计收益率</span>
             <strong id="metricReturnRate">0%</strong>
             <small id="metricReturnCaption">累计收益 / 累计本金</small>
+          </article>
+          <article class="metric-card real-card">
+            <span class="metric-label">实际购买力</span>
+            <strong id="metricRealValue">¥0</strong>
+            <small id="metricRealCaption">按通胀折现为今天价值</small>
+          </article>
+          <article class="metric-card">
+            <span class="metric-label">购买力折损</span>
+            <strong id="metricInflationDrag">¥0</strong>
+            <small id="metricInflationCaption">名义终值 - 实际购买力</small>
           </article>
         </section>
 
@@ -233,6 +250,8 @@
                   <th>年度回报</th>
                   <th>累计收益</th>
                   <th>年末总资产</th>
+                  <th>实际购买力</th>
+                  <th>实际累计收益</th>
                   <th>累计收益率</th>
                 </tr>
               </thead>
