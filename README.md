@@ -2,6 +2,12 @@
 
 原生 HTML / CSS / JavaScript 实现的投资规划工具，无后端、无前端构建步骤，支持固定收益预测、真实月度历史回测、目标反推、通胀折算、方案比较及 CSV 导出。
 
+## 在线使用
+
+**[点击打开投资复利计算器网页版](https://jalhao.github.io/InterestCalculator/)**
+
+通过 GitHub Pages 部署，点击链接即可在浏览器中使用，无需下载或安装。
+
 ## 本地运行
 
 ```bash
