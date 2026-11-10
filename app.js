@@ -103,7 +103,7 @@ const elements = {
   backtestStartYear: document.getElementById("backtestStartYear"),
 };
 
-for (const id of ['backtestPrecision', 'backtestStartMonth', 'backtestEndMonth', 'targetBasis', 'showTargetLine', 'dataStatus', 'refreshData', 'monthlyRange', 'annualRange', 'formStatus', 'metricAnnualReturn', 'savePlan', 'sharePlan', 'planList', 'planStatus']) {
+for (const id of ['backtestPrecision', 'backtestStartMonth', 'backtestEndMonth', 'targetBasis', 'showTargetLine', 'dataStatus', 'refreshData', 'monthlyRange', 'annualRange', 'formStatus', 'savePlan', 'sharePlan', 'planList', 'planStatus']) {
   elements[id] = document.getElementById(id);
 }
 
@@ -709,7 +709,6 @@ function updateMetrics() {
   elements.metricProfit.classList.toggle("negative", finalRow.cumulativeProfit < 0);
   elements.metricReturnRate.classList.toggle("negative", finalRow.cumulativeReturn < 0);
   elements.metricRealValue.classList.toggle("negative", finalRow.realCumulativeProfit < 0);
-  elements.metricAnnualReturn.textContent = finalRow.cumulativePrincipal > 0 && Number.isFinite(state.projection.base.moneyWeightedReturn) ? formatPercent(state.projection.base.moneyWeightedReturn) : "不适用";
 }
 
 function renderGoalSection() {
