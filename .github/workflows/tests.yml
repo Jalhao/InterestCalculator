@@ -1,0 +1,36 @@
+name: Calculator checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Calculation and update tests
+        run: |
+          node --check app.js
+          node --check app-extras.js
+          node --test tests/engine.test.js
+          python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Install browser test tools
+        run: |
+          python3 -m pip install -r requirements-dev.txt
+          python3 -m playwright install --with-deps chromium
+      - name: Browser functional tests
+        env:
+          CHROMIUM_EXECUTABLE: ''
+        run: |
+          python3 -m http.server 8000 --bind 127.0.0.1 > /tmp/interest-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          curl --retry 10 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:8000/ -o /dev/null
+          python3 tests/browser_smoke.py

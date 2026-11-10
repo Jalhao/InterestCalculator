@@ -742,3 +742,35 @@ tbody tr.is-highlighted {
     max-width: calc(100% - 24px);
   }
 }
+
+/* Explicit hidden wins over layout classes such as .advanced-grid. */
+[hidden] { display: none !important; }
+button:focus-visible, .chart-surface:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 3px solid var(--teal); outline-offset: 3px;
+}
+.checkbox-field { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .88rem; }
+.checkbox-field input { width: auto; }
+.plan-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; }
+.plan-toolbar .field { flex: 1 1 200px; }
+#planList { margin-top: 16px; }
+#planList button { margin-right: 12px; }
+#shareUrl { width: 100%; }
+#dataStatus, #formStatus { overflow-wrap: anywhere; }
+input[readonly] { background: var(--bg-soft); }
+.control-panel, .dashboard, .panel-card, .metric-card { min-width: 0; }
+@media (max-width: 1180px) { .page-shell { grid-template-columns: minmax(0, 1fr); } }
+.goal-card, .insights-card { padding: 24px; }
+input[type="month"], input[type="text"] {
+  min-width: 0; width: 100%; padding: 14px 16px;
+  border: 1px solid rgba(17,32,49,.1); border-radius: 16px;
+  background: rgba(248,251,255,.88); color: var(--ink);
+}
+.chart-controls { display: grid; gap: 10px; }
+.metrics-grid > .metric-card:last-child {
+  grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 12px 24px;
+}
+.metrics-grid > .metric-card:last-child small { margin-left: auto; }
+@media (max-width: 780px) {
+  .goal-card, .insights-card { padding: 18px; }
+  .metrics-grid > .metric-card:last-child small { margin-left: 0; }
+}

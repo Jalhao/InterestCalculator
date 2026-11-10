@@ -1,24 +1,3 @@
-const HISTORICAL_DATASETS = {
-  sp500: {
-    label: "标普 500",
-    shortLabel: "标普 500",
-    years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
-    returns: [0.1506, 0.0211, 0.16, 0.3239, 0.1369, 0.0138, 0.1196, 0.2183, -0.0438, 0.3149, 0.184, 0.2871, -0.1811, 0.2629, 0.2502],
-  },
-  nasdaq100: {
-    label: "纳斯达克 100",
-    shortLabel: "纳指 100",
-    years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
-    returns: [0.192, 0.027, 0.181, 0.366, 0.192, 0.095, 0.071, 0.327, -0.01, 0.39, 0.486, 0.274, -0.326, 0.549, 0.256],
-  },
-  csi300: {
-    label: "沪深 300",
-    shortLabel: "沪深 300",
-    years: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024],
-    returns: [-0.1251, -0.2501, 0.0755, -0.0765, 0.5166, 0.0558, -0.1128, 0.2178, -0.2531, 0.3607, 0.2721, -0.052, -0.2163, -0.1138, 0.1468],
-  },
-};
-
 const defaults = {
   calculationMode: "projection",
   initialAmount: 100000,
@@ -33,6 +12,11 @@ const defaults = {
   inflationRate: 2.5,
   backtestDataset: "sp500",
   backtestStartYear: "2010",
+  backtestPrecision: "monthly",
+  backtestStartMonth: "",
+  backtestEndMonth: "",
+  targetBasis: "nominal",
+  showTargetLine: true,
 };
 
 const currencyFormatter = new Intl.NumberFormat("zh-CN", {
@@ -61,6 +45,9 @@ const state = {
     comparison: new Set(),
   },
   chartGeometry: null,
+  monthlyData: {},
+  dataMessage: "正在检查月度行情…",
+  focusIndex: 0,
 };
 
 const elements = {
@@ -115,6 +102,10 @@ const elements = {
   backtestDataset: document.getElementById("backtestDataset"),
   backtestStartYear: document.getElementById("backtestStartYear"),
 };
+
+for (const id of ['backtestPrecision', 'backtestStartMonth', 'backtestEndMonth', 'targetBasis', 'showTargetLine', 'dataStatus', 'refreshData', 'monthlyRange', 'annualRange', 'formStatus', 'metricAnnualReturn', 'savePlan', 'sharePlan', 'planList', 'planStatus']) {
+  elements[id] = document.getElementById(id);
+}
 
 const tones = {
   conservative: {
@@ -218,146 +209,24 @@ function getRowLabel(row, index) {
   return index === 0 ? "起点" : `${index}年`;
 }
 
-function annualToMonthlyRate(annualRateDecimal) {
-  return Math.pow(1 + clamp(annualRateDecimal, -0.99, 5), 1 / 12) - 1;
-}
-
-function getInflationFactor(inputs, year) {
-  return Math.pow(1 + clamp(inputs.inflationRate / 100, -0.95, 3), year);
-}
-
-function addRealPurchasingPower(row, inputs) {
-  const inflationFactor = getInflationFactor(inputs, row.year);
-  const realYearStartBalance = row.yearStartBalance / inflationFactor;
-  const realAnnualContribution = row.annualContribution / inflationFactor;
-  const realCumulativePrincipal = row.cumulativePrincipal;
-  const realAnnualInterest = row.annualInterest / inflationFactor;
-  const realEndBalance = row.endBalance / inflationFactor;
-  const realCumulativeProfit = realEndBalance - row.cumulativePrincipal;
-
-  return {
-    ...row,
-    inflationFactor,
-    realYearStartBalance,
-    realAnnualContribution,
-    realCumulativePrincipal,
-    realAnnualInterest,
-    realEndBalance,
-    realCumulativeProfit,
-    realCumulativeReturn: safeRatio(realCumulativeProfit, realCumulativePrincipal),
-    purchasingPowerDrag: row.endBalance - realEndBalance,
-  };
-}
-
-function shouldContributeForMonth(inputs, month) {
-  const isMonthlyContribution = inputs.contributionFrequency === "monthly";
-  const isYearlyAtStart = inputs.contributionFrequency === "yearly" && inputs.contributionTiming === "start" && month === 1;
-  const isYearlyAtEnd = inputs.contributionFrequency === "yearly" && inputs.contributionTiming === "end" && month === 12;
-
-  return isMonthlyContribution || isYearlyAtStart || isYearlyAtEnd;
-}
-
 function simulateAnnualSeries(inputs, annualRates, yearLabels = []) {
-  const rows = [];
-  const sampleDescriptors = annualRates.map((rate, index) => ({
-    label: yearLabels[index] || `第 ${index + 1} 年`,
-    rate,
-  }));
+  return InvestmentEngine.simulateAnnualSeries(inputs, annualRates, yearLabels);
+}
 
-  let balance = inputs.initialAmount;
-  let cumulativePrincipal = inputs.initialAmount;
-  let benchmarkGrowth = 1;
-
-  rows.push(
-    addRealPurchasingPower(
-      {
-        year: 0,
-        calendarYear: null,
-        yearStartBalance: inputs.initialAmount,
-        annualContribution: 0,
-        cumulativePrincipal,
-        annualInterest: 0,
-        annualMarketReturn: 0,
-        benchmarkGrowth,
-        cumulativeProfit: balance - cumulativePrincipal,
-        endBalance: balance,
-        cumulativeReturn: safeRatio(balance - cumulativePrincipal, cumulativePrincipal),
-      },
-      inputs
-    )
-  );
-
-  annualRates.forEach((annualRate, index) => {
-    const yearStartBalance = balance;
-    const monthlyRate = annualToMonthlyRate(annualRate);
-    let annualContribution = 0;
-    let annualInterest = 0;
-
-    for (let month = 1; month <= 12; month += 1) {
-      const shouldContribute = shouldContributeForMonth(inputs, month);
-
-      if (shouldContribute && inputs.contributionTiming === "start") {
-        balance += inputs.contributionAmount;
-        annualContribution += inputs.contributionAmount;
-      }
-
-      const monthlyInterest = balance * monthlyRate;
-      annualInterest += monthlyInterest;
-      balance += monthlyInterest;
-
-      if (shouldContribute && inputs.contributionTiming === "end") {
-        balance += inputs.contributionAmount;
-        annualContribution += inputs.contributionAmount;
-      }
-    }
-
-    cumulativePrincipal += annualContribution;
-    benchmarkGrowth *= 1 + annualRate;
-    const cumulativeProfit = balance - cumulativePrincipal;
-
-    rows.push(
-      addRealPurchasingPower(
-        {
-          year: index + 1,
-          calendarYear: yearLabels[index] || null,
-          yearStartBalance,
-          annualContribution,
-          cumulativePrincipal,
-          annualInterest,
-          annualMarketReturn: annualRate,
-          benchmarkGrowth,
-          cumulativeProfit,
-          endBalance: balance,
-          cumulativeReturn: safeRatio(cumulativeProfit, cumulativePrincipal),
-        },
-        inputs
-      )
-    );
-  });
-
-  const averageAnnualReturn = sampleDescriptors.length
-    ? sampleDescriptors.reduce((sum, item) => sum + item.rate, 0) / sampleDescriptors.length
-    : 0;
-
-  const bestPeriod = sampleDescriptors.reduce((best, current) => (best === null || current.rate > best.rate ? current : best), null);
-  const worstPeriod = sampleDescriptors.reduce((worst, current) => (worst === null || current.rate < worst.rate ? current : worst), null);
-  const negativeYearsCount = sampleDescriptors.filter((item) => item.rate < 0).length;
-  const benchmarkCagr = sampleDescriptors.length ? Math.pow(benchmarkGrowth, 1 / sampleDescriptors.length) - 1 : 0;
-
-  return {
-    rows,
-    annualRates,
-    yearLabels,
-    finalRow: rows[rows.length - 1],
-    averageAnnualReturn,
-    benchmarkCagr,
-    bestPeriod,
-    worstPeriod,
-    negativeYearsCount,
-  };
+function activeMonthlyData() {
+  return elements.backtestPrecision.value === 'monthly' ? state.monthlyData[elements.backtestDataset.value] : null;
 }
 
 function getBacktestSlice(inputs) {
+  const monthlyData = inputs.backtestPrecision === 'monthly' && state.monthlyData[inputs.backtestDataset];
+  if (monthlyData) {
+    const periods = InvestmentEngine.monthlySlice(monthlyData, inputs.backtestStartMonth, inputs.backtestEndMonth);
+    const years = periods.length / 12;
+    return { dataset: getDataset(inputs.backtestDataset), datasetKey: inputs.backtestDataset,
+      periods, monthly: true, startYear: periods[0].date, endYear: periods.at(-1).date,
+      effectiveYears: years, updatedAt: monthlyData.updatedAt, source: monthlyData.source,
+      annualRates: [], yearLabels: [] };
+  }
   const dataset = getDataset(inputs.backtestDataset);
   const requestedStartYear = Number(inputs.backtestStartYear);
   const fallbackStartYear = dataset.years[0];
@@ -382,7 +251,7 @@ function calculateBaseSimulation(inputs, contributionAmount = inputs.contributio
   if (inputs.calculationMode === "backtest") {
     const slice = getBacktestSlice(nextInputs);
     return {
-      ...simulateAnnualSeries(nextInputs, slice.annualRates, slice.yearLabels),
+      ...(slice.monthly ? InvestmentEngine.simulateMonths(nextInputs, slice.periods) : simulateAnnualSeries(nextInputs, slice.annualRates, slice.yearLabels)),
       meta: slice,
     };
   }
@@ -399,7 +268,7 @@ function calculateBaseSimulation(inputs, contributionAmount = inputs.contributio
 function calculateProjection(inputs) {
   if (inputs.calculationMode === "backtest") {
     const slice = getBacktestSlice(inputs);
-    const base = simulateAnnualSeries(inputs, slice.annualRates, slice.yearLabels);
+    const base = slice.monthly ? InvestmentEngine.simulateMonths(inputs, slice.periods) : simulateAnnualSeries(inputs, slice.annualRates, slice.yearLabels);
 
     return {
       mode: "backtest",
@@ -455,6 +324,7 @@ function calculateProjection(inputs) {
 
 
 function getPlanningHorizon(inputs) {
+  if (inputs.calculationMode === "backtest" && inputs.backtestPrecision === "monthly" && state.monthlyData[inputs.backtestDataset]) return inputs.years;
   if (inputs.calculationMode === "backtest") {
     const dataset = getDataset(inputs.backtestDataset);
     const requestedStartYear = Number(inputs.backtestStartYear);
@@ -466,12 +336,12 @@ function getPlanningHorizon(inputs) {
   return 50;
 }
 
-function findTargetHitRow(rows, targetAmount) {
+function findTargetHitRow(rows, targetAmount, inputs = state.inputs) {
   if (targetAmount <= 0) {
     return rows[0] || null;
   }
 
-  return rows.find((row) => row.endBalance >= targetAmount) || null;
+  return rows.find((row) => (inputs.targetBasis === "real" ? row.realEndBalance : row.endBalance) >= targetAmount) || null;
 }
 
 function formatGoalTime(row) {
@@ -483,7 +353,7 @@ function formatGoalTime(row) {
     return "起点已达标";
   }
 
-  return row.calendarYear ? `${row.calendarYear}` : `第 ${row.year} 年`;
+  return row.calendarYear ? `${row.calendarYear}` : row.months % 12 === 0 ? `第 ${row.months / 12} 年` : `第 ${row.months} 个月`;
 }
 
 function buildExtendedGoalRows(inputs, projection) {
@@ -494,7 +364,8 @@ function buildExtendedGoalRows(inputs, projection) {
     return null;
   }
 
-  return calculateBaseSimulation({ ...inputs, years: maxYears }).rows;
+  const simulation = calculateBaseSimulation({ ...inputs, years: maxYears });
+  return simulation.monthlyRows || simulation.rows;
 }
 
 function buildGoalMilestones(targetAmount, currentRows, extendedRows = []) {
@@ -526,43 +397,25 @@ function buildGoalMilestones(targetAmount, currentRows, extendedRows = []) {
 
 function solveRequiredContribution(inputs, projection) {
   const targetAmount = Math.max(0, inputs.targetAmount);
-  const currentFinalBalance = projection.base.finalRow.endBalance;
+  const currentFinalBalance = inputs.targetBasis === "real" ? projection.base.finalRow.realEndBalance : projection.base.finalRow.endBalance;
   const currentContribution = inputs.contributionAmount;
   const cadence = getContributionCadence(inputs);
   const targetContext = inputs.calculationMode === "backtest"
     ? `${projection.backtest.label} ${projection.backtest.startYear}-${projection.backtest.endYear} 的历史路径`
     : `${formatPercent(inputs.annualRate / 100)} 固定年化假设`;
 
-  const simulateFinalBalance = (contributionAmount) => calculateBaseSimulation(inputs, contributionAmount).finalRow.endBalance;
-  const zeroContributionFinal = simulateFinalBalance(0);
+  const simulate = amount => {
+    const result = calculateBaseSimulation(inputs, amount);
+    if (inputs.targetBasis === 'real') result.finalRow = { ...result.finalRow, endBalance: result.finalRow.realEndBalance };
+    return result;
+  };
+  const solution = InvestmentEngine.solveContribution(simulate, targetAmount);
+  const requiredContribution = solution.amount;
 
-  let requiredContribution = 0;
-
-  if (targetAmount > zeroContributionFinal) {
-    let lowerBound = 0;
-    let upperBound = Math.max(currentContribution, 1000);
-
-    while (simulateFinalBalance(upperBound) < targetAmount && upperBound < 1_000_000_000) {
-      lowerBound = upperBound;
-      upperBound *= 2;
-    }
-
-    for (let iteration = 0; iteration < 52; iteration += 1) {
-      const midpoint = (lowerBound + upperBound) / 2;
-      if (simulateFinalBalance(midpoint) >= targetAmount) {
-        upperBound = midpoint;
-      } else {
-        lowerBound = midpoint;
-      }
-    }
-
-    requiredContribution = Math.ceil(upperBound);
-  }
-
-  const contributionGap = requiredContribution - currentContribution;
+  const contributionGap = requiredContribution === null ? null : requiredContribution - currentContribution;
   const targetGap = currentFinalBalance - targetAmount;
   const status = targetGap >= 0 ? "ahead" : "shortfall";
-  const currentRows = projection.base.rows;
+  const currentRows = projection.base.monthlyRows || projection.base.rows;
   const goalHitRow = findTargetHitRow(currentRows, targetAmount);
   const extendedRows = goalHitRow ? [] : buildExtendedGoalRows(inputs, projection) || [];
   const extendedGoalHitRow = goalHitRow ? null : findTargetHitRow(extendedRows, targetAmount);
@@ -579,7 +432,9 @@ function solveRequiredContribution(inputs, projection) {
 
   let summary;
   const goalTimeText = formatGoalTime(goalHitRow || extendedGoalHitRow);
-  if (targetAmount === 0) {
+  if (!solution.supported) {
+    summary = "目标超出支持的单次定投上限（1 万亿元），请调整目标或期限；未返回可达标金额。";
+  } else if (targetAmount === 0) {
     summary = "当前目标为 0 元，因此无需额外定投即可达标。";
   } else if (status === "ahead" && requiredContribution === 0) {
     summary = `在 ${targetContext} 下，仅凭初始本金就有机会达到 ${formatCurrency(targetAmount)}，当前计划的结果将高于目标 ${formatCurrency(Math.abs(targetGap))}。`;
@@ -596,6 +451,7 @@ function solveRequiredContribution(inputs, projection) {
     currentContribution,
     currentFinalBalance,
     requiredContribution,
+    supported: solution.supported,
     contributionGap,
     targetGap,
     status,
@@ -606,7 +462,7 @@ function solveRequiredContribution(inputs, projection) {
     goalHitStatus,
     goalHitCaption,
     milestones,
-    summary,
+    summary: inputs.calculationMode === "backtest" ? summary.replaceAll("预计", "历史模拟").replaceAll("有望", "按样本").replaceAll("若保持", "仅在历史样本内延长；保持") : summary,
   };
 }
 
@@ -630,7 +486,7 @@ function generateInsights(inputs, projection, goalAnalysis) {
       title: "目标达成度",
       metric: formatSignedCurrency(goalAnalysis.targetGap),
       tone: goalAnalysis.status === "ahead" ? "positive" : "warning",
-      body:
+      body: !goalAnalysis.supported ? "目标超出支持范围，请调整目标或期限。" :
         goalAnalysis.status === "ahead"
           ? `当前计划预计高出目标 ${formatCurrency(Math.abs(goalAnalysis.targetGap))}，如果只想刚好达标，可把单次定投下调到 ${formatCurrency(goalAnalysis.requiredContribution)}。`
           : `当前计划预计仍差 ${formatCurrency(Math.abs(goalAnalysis.targetGap))}，要达标需要把单次定投提高到 ${formatCurrency(goalAnalysis.requiredContribution)}。`,
@@ -650,14 +506,14 @@ function generateInsights(inputs, projection, goalAnalysis) {
       metric: takeoverRow ? (takeoverRow.calendarYear ? `${takeoverRow.calendarYear}` : `第 ${takeoverRow.year} 年`) : "尚未出现",
       tone: takeoverRow ? "positive" : "neutral",
       body: takeoverRow
-        ? `从这一年开始，本年收益 ${formatCurrency(takeoverRow.annualInterest)} 已经超过本年投入 ${formatCurrency(takeoverRow.annualContribution)}，增长开始更多依赖存量资产。`
-        : "在当前期限内，本年收益还没有超过当年投入，资产增长仍主要依赖继续追加本金。",
+        ? `这一年首次出现本年收益 ${formatCurrency(takeoverRow.annualInterest)} 已经超过本年投入 ${formatCurrency(takeoverRow.annualContribution)}；这不代表以后每年都会超过投入。`
+        : inputs.contributionAmount === 0 ? "当前未设置追加投入；资产变化来自初始本金的投资损益。" : "在当前期限内，本年收益尚未超过当年投入。",
     },
     {
       title: "收益结构",
       metric: formatPercent(finalProfitShare),
       tone: finalProfitShare >= 0.45 ? "positive" : "neutral",
-      body: `最终资产中约 ${formatPercent(finalProfitShare)} 来自收益，约 ${formatPercent(finalPrincipalShare)} 来自累计本金。`,
+      body: finalRow.cumulativeProfit < 0 ? `累计亏损 ${formatCurrency(-finalRow.cumulativeProfit)}，相当于累计投入的 ${formatPercent(-finalRow.cumulativeReturn)}。` : `最终资产中约 ${formatPercent(finalProfitShare)} 来自收益，约 ${formatPercent(finalPrincipalShare)} 来自累计本金。`,
     },
     {
       title: "真实购买力",
@@ -674,7 +530,7 @@ function generateInsights(inputs, projection, goalAnalysis) {
       metric: worstPeriod ? `${worstPeriod.label} ${formatPercent(worstPeriod.rate)}` : "样本不足",
       tone: "neutral",
       body: bestPeriod
-        ? `${label} 这段样本中共有 ${negativeYearsCount} 个下跌年份，最强年份是 ${bestPeriod.label} 的 ${formatPercent(bestPeriod.rate)}。`
+        ? `${label} 这段样本中共有 ${negativeYearsCount} 个下跌区间，最佳区间是 ${bestPeriod.label} 的 ${formatPercent(bestPeriod.rate)}。`
         : "当前历史样本不足，无法提炼出强弱年份特征。",
     });
   } else {
@@ -698,18 +554,32 @@ function renderModeSections(selectedMode) {
 }
 
 function syncBacktestControls() {
+  const monthly = activeMonthlyData();
+  const usingMonthly = elements.calculationMode.value === 'backtest' && Boolean(monthly);
+  elements.monthlyRange.hidden = !usingMonthly;
+  elements.annualRange.hidden = usingMonthly;
+  elements.years.readOnly = usingMonthly;
+  if (usingMonthly) {
+    const available = monthly.prices.slice(1).map(p => p.date);
+    for (const [field, fallback] of [[elements.backtestStartMonth, available[Math.max(0, available.length - 120)]] , [elements.backtestEndMonth, available.at(-1)]]) {
+      field.min = available[0]; field.max = available.at(-1);
+      if (!available.includes(field.value)) field.value = fallback;
+    }
+    if (elements.backtestStartMonth.value > elements.backtestEndMonth.value) elements.backtestEndMonth.value = elements.backtestStartMonth.value;
+    const months = InvestmentEngine.monthIndex(elements.backtestEndMonth.value) - InvestmentEngine.monthIndex(elements.backtestStartMonth.value) + 1;
+    elements.years.value = String(Number((months / 12).toFixed(4)));
+    elements.chartComparisonButton.textContent = '标的累计涨幅';
+    renderModeSections('backtest');
+    elements.backtestRangeHint.textContent = `真实月末点位回测 ${elements.backtestStartMonth.value}—${elements.backtestEndMonth.value}，共 ${months} 个月。年度投入每满 12 个月一周期；区间末尾不足一年按实际月数计算。`;
+    return;
+  }
   const mode = elements.calculationMode.value === "backtest" ? "backtest" : "projection";
   const dataset = getDataset(elements.backtestDataset.value);
   const maxYears = mode === "backtest" ? dataset.years.length : 50;
-  const rawYears = clamp(Math.round(toNumber(elements.years.value, defaults.years)), 1, maxYears);
-  const backtestYears = clamp(Math.round(toNumber(elements.years.value, defaults.years)), 1, dataset.years.length);
 
   elements.years.max = String(maxYears);
-  if (mode === "backtest" && Number(elements.years.value) !== rawYears) {
-    elements.years.value = String(rawYears);
-  }
 
-  const validStartYears = dataset.years.slice(0, dataset.years.length - backtestYears + 1);
+  const validStartYears = dataset.years;
   const currentStartYear = Number(elements.backtestStartYear.value);
   const nextStartYear = validStartYears.includes(currentStartYear) ? currentStartYear : validStartYears[0];
 
@@ -723,39 +593,37 @@ function syncBacktestControls() {
 
   const firstAvailableStart = validStartYears[0];
   const lastAvailableStart = validStartYears[validStartYears.length - 1];
-  elements.backtestRangeHint.textContent = `${dataset.label} 样本覆盖 ${dataset.years[0]}-${dataset.years[dataset.years.length - 1]}，当前 ${backtestYears} 年回测可选起点 ${firstAvailableStart}-${lastAvailableStart}。`;
+  elements.backtestRangeHint.textContent = `${dataset.label} 样本覆盖 ${dataset.years[0]}-${dataset.years[dataset.years.length - 1]}，年度近似回测（超出样本的年限将截断）；可选起点 ${firstAvailableStart}-${lastAvailableStart}。`;
 }
 
 function sanitizeInputs() {
+  const usingMonthly = elements.calculationMode.value === "backtest" && activeMonthlyData();
   const calculationMode = elements.calculationMode.value === "backtest" ? "backtest" : "projection";
   const dataset = getDataset(elements.backtestDataset.value);
   const maxYears = calculationMode === "backtest" ? dataset.years.length : 50;
 
   const parsed = {
     calculationMode,
-    initialAmount: Math.max(0, Math.round(toNumber(elements.initialAmount.value, defaults.initialAmount))),
-    years: clamp(Math.round(toNumber(elements.years.value, defaults.years)), 1, maxYears),
-    contributionAmount: Math.max(0, Math.round(toNumber(elements.contributionAmount.value, defaults.contributionAmount))),
+    initialAmount: Math.min(1e12, Math.max(0, Math.round(toNumber(elements.initialAmount.value === "" ? state.inputs.initialAmount : elements.initialAmount.value, defaults.initialAmount)))),
+    years: usingMonthly ? (InvestmentEngine.monthIndex(elements.backtestEndMonth.value) - InvestmentEngine.monthIndex(elements.backtestStartMonth.value) + 1) / 12 : clamp(Math.round(toNumber(elements.years.value || state.inputs.years, defaults.years)), 1, maxYears),
+    contributionAmount: Math.min(1e12, Math.max(0, Math.round(toNumber(elements.contributionAmount.value === "" ? state.inputs.contributionAmount : elements.contributionAmount.value, defaults.contributionAmount)))),
     contributionFrequency: elements.contributionFrequency.value === "yearly" ? "yearly" : "monthly",
-    annualRate: clamp(toNumber(elements.annualRate.value, defaults.annualRate), -50, 80),
+    annualRate: clamp(toNumber(elements.annualRate.value === "" ? state.inputs.annualRate : elements.annualRate.value, defaults.annualRate), -50, 80),
     contributionTiming: elements.contributionTiming.value === "end" ? "end" : "start",
-    scenarioSpread: clamp(Math.abs(toNumber(elements.scenarioSpread.value, defaults.scenarioSpread)), 0, 15),
+    scenarioSpread: clamp(Math.abs(toNumber(elements.scenarioSpread.value === "" ? state.inputs.scenarioSpread : elements.scenarioSpread.value, defaults.scenarioSpread)), 0, 15),
     chartMode: elements.chartMode.value === "comparison" ? "comparison" : "breakdown",
-    targetAmount: Math.max(0, Math.round(toNumber(elements.targetAmount.value, defaults.targetAmount))),
-    inflationRate: clamp(toNumber(elements.inflationRate.value, defaults.inflationRate), -10, 30),
+    targetAmount: Math.min(1e15, Math.max(0, Math.round(toNumber(elements.targetAmount.value === "" ? state.inputs.targetAmount : elements.targetAmount.value, defaults.targetAmount)))),
+    inflationRate: clamp(toNumber(elements.inflationRate.value === "" ? state.inputs.inflationRate : elements.inflationRate.value, defaults.inflationRate), -10, 30),
     backtestDataset: Object.prototype.hasOwnProperty.call(HISTORICAL_DATASETS, elements.backtestDataset.value)
       ? elements.backtestDataset.value
       : defaults.backtestDataset,
     backtestStartYear: elements.backtestStartYear.value || defaults.backtestStartYear,
+    backtestPrecision: usingMonthly ? 'monthly' : 'annual',
+    backtestStartMonth: elements.backtestStartMonth.value,
+    backtestEndMonth: elements.backtestEndMonth.value,
+    targetBasis: elements.targetBasis.value === 'real' ? 'real' : 'nominal',
+    showTargetLine: elements.showTargetLine.checked,
   };
-
-  elements.initialAmount.value = String(parsed.initialAmount);
-  elements.years.value = String(parsed.years);
-  elements.contributionAmount.value = String(parsed.contributionAmount);
-  elements.annualRate.value = String(parsed.annualRate);
-  elements.scenarioSpread.value = String(parsed.scenarioSpread);
-  elements.targetAmount.value = String(parsed.targetAmount);
-  elements.inflationRate.value = String(parsed.inflationRate);
 
   state.inputs = parsed;
   return parsed;
@@ -765,8 +633,8 @@ function renderAssumptions(inputs, projection) {
   if (inputs.calculationMode === "backtest") {
     elements.assumptionTitle.textContent = "历史回测说明";
     elements.assumptionList.innerHTML = `
-      <li>历史回测基于内置年度收益样本，并按所选年份顺序逐年回放。</li>
-      <li>当前回测区间为 ${projection.backtest.startYear}-${projection.backtest.endYear}，共 ${projection.backtest.effectiveYears} 个年度样本。</li>
+      <li>${projection.backtest.monthly ? "使用真实月末收盘点位计算月收益；排除尚未结束的月份。" : "使用内置 2010—2024 年度示例收益，按等效固定月收益近似模拟，不代表真实月度定投。"}</li>
+      <li>当前回测区间为 ${projection.backtest.startYear}-${projection.backtest.endYear}，共 ${Number(projection.backtest.effectiveYears.toFixed(2))} 年；${projection.backtest.monthly ? "Yahoo Finance 的美元指数价格回报，不含分红再投资；金额以人民币展示仅作同币种记账，不含汇率变动。" : "内置示例未附可追溯数据源，不能用于精确回测。"}</li>
       <li>实际购买力按 ${formatPercent(inputs.inflationRate / 100)} 年通胀率折现为今天价值；结果仍未包含税费、滑点、交易成本与分红再投资细节。</li>
     `;
     return;
@@ -776,7 +644,7 @@ function renderAssumptions(inputs, projection) {
   elements.assumptionList.innerHTML = `
     <li>采用固定年化收益率，并换算为等效月收益率进行逐月模拟。</li>
     <li>情景对比默认以基准收益率为中心，生成保守与乐观两条曲线。</li>
-    <li>实际购买力按 ${formatPercent(inputs.inflationRate / 100)} 年通胀率折现为今天价值，目标反推仍按名义终值计算。</li>
+    <li>实际购买力按 ${formatPercent(inputs.inflationRate / 100)} 年通胀率折现为今天价值，目标反推按${inputs.targetBasis === "real" ? "今天购买力" : "名义终值"}计算；实际累计收益将各笔投入折现到同一基准时点。</li>
     <li>结果未包含税费、申赎费用与回撤波动。</li>
   `;
 }
@@ -788,17 +656,17 @@ function renderContextCards() {
       <article class="scenario-card" data-tone="base">
         <span>回测标的</span>
         <strong>${label}</strong>
-        <span>内置年度收益样本</span>
+        <span>${state.projection.backtest.monthly ? "真实月末点位 · 价格回报" : "年度示例 · 近似模拟"}</span>
       </article>
       <article class="scenario-card" data-tone="conservative">
         <span>回测区间</span>
         <strong>${startYear} - ${endYear}</strong>
-        <span>${effectiveYears} 个完整年度</span>
+        <span>${Number(effectiveYears.toFixed(2))} 年（末段可能不足一年）</span>
       </article>
       <article class="scenario-card" data-tone="optimistic">
         <span>样本年化</span>
         <strong>${formatPercent(benchmarkCagr)}</strong>
-        <span>${worstPeriod ? `最差年份 ${worstPeriod.label} ${formatPercent(worstPeriod.rate)}` : "暂无最差年份"}</span>
+        <span>${worstPeriod ? `最弱区间 ${worstPeriod.label} ${formatPercent(worstPeriod.rate)}` : "暂无最弱区间"}</span>
       </article>
     `;
     return;
@@ -826,12 +694,12 @@ function updateMetrics() {
   elements.metricRealValue.textContent = formatCurrency(finalRow.realEndBalance);
   elements.metricInflationDrag.textContent = formatCurrency(finalRow.purchasingPowerDrag);
   elements.metricRealCaption.textContent = `按 ${formatPercent(inputs.inflationRate / 100)} 年通胀折现`;
-  elements.metricInflationCaption.textContent = `${inputs.years} 年累计购买力折损`;
+  elements.metricInflationCaption.textContent = `${Number(finalRow.year.toFixed(2))} 年累计购买力折损`;
   elements.metricPrincipalCaption.textContent = `初始本金 + ${getContributionCadenceLabel(inputs)}`;
-  elements.metricReturnCaption.textContent = "累计收益 / 累计本金";
+  elements.metricReturnCaption.textContent = "累计收益 / 累计投入，非年化";
 
   if (state.projection.mode === "backtest") {
-    elements.metricFinalCaption.textContent = `${state.projection.backtest.startYear}-${state.projection.backtest.endYear} 历史路径终值`;
+    elements.metricFinalCaption.textContent = `${state.projection.backtest.startYear}—${state.projection.backtest.endYear} ${state.projection.backtest.monthly ? "月度回测" : "年度近似"}终值`;
     elements.metricProfitCaption.textContent = `${state.projection.backtest.label} 回测样本`;
   } else {
     elements.metricFinalCaption.textContent = `${inputs.years} 年后的基准情景终值`;
@@ -840,25 +708,26 @@ function updateMetrics() {
 
   elements.metricProfit.classList.toggle("negative", finalRow.cumulativeProfit < 0);
   elements.metricReturnRate.classList.toggle("negative", finalRow.cumulativeReturn < 0);
-  elements.metricRealValue.classList.toggle("negative", finalRow.realEndBalance < finalRow.cumulativePrincipal);
+  elements.metricRealValue.classList.toggle("negative", finalRow.realCumulativeProfit < 0);
+  elements.metricAnnualReturn.textContent = finalRow.cumulativePrincipal > 0 && Number.isFinite(state.projection.base.moneyWeightedReturn) ? formatPercent(state.projection.base.moneyWeightedReturn) : "不适用";
 }
 
 function renderGoalSection() {
   const goal = state.goalAnalysis;
 
   elements.goalTargetValue.textContent = formatCurrency(goal.targetAmount);
-  elements.goalTargetCaption.textContent = `当前期限 ${state.inputs.years} 年`;
-  elements.goalRequiredContribution.textContent = formatCurrency(goal.requiredContribution);
+  elements.goalTargetCaption.textContent = `${state.inputs.targetBasis === "real" ? "以今天购买力为目标" : "以未来名义金额为目标"} · ${Number(state.projection.base.finalRow.year.toFixed(2))} 年`;
+  elements.goalRequiredContribution.textContent = goal.supported ? formatCurrency(goal.requiredContribution) : "超出范围";
   elements.goalRequiredCaption.textContent = `按当前 ${goal.cadence} 节奏反推`;
-  elements.goalContributionGap.textContent = formatSignedCurrency(goal.contributionGap);
+  elements.goalContributionGap.textContent = goal.supported ? formatSignedCurrency(goal.contributionGap) : "—";
   elements.goalGapCaption.textContent = "正数代表需要增加，负数代表可以减少";
   elements.goalHitTime.textContent = formatGoalTime(goal.goalHitRow || goal.extendedGoalHitRow);
-  elements.goalHitCaption.textContent = goal.goalHitCaption;
+  elements.goalHitCaption.textContent = state.inputs.calculationMode === "backtest" ? `${goal.goalHitCaption}（历史模拟，不预测未来）` : goal.goalHitCaption;
   elements.goalSummaryText.textContent = goal.summary;
   elements.goalMilestones.innerHTML = goal.milestones
     .map((milestone) => {
       const statusText = milestone.status === "current" ? formatGoalTime(milestone.hitRow) : milestone.status === "extended" ? `延长后 ${formatGoalTime(milestone.hitRow)}` : "未达成";
-      const progress = Math.min(milestone.ratio * 100, 100);
+      const progress = Math.min(safeRatio(goal.currentFinalBalance, milestone.amount) * 100, 100);
 
       return `
         <article class="milestone-item" data-status="${milestone.status}">
@@ -980,7 +849,7 @@ function getComparisonSeries() {
       series: [
         {
           key: "portfolioReturn",
-          label: "组合累计收益率",
+          label: "投入收益比（非年化）",
           color: tones.base.color,
           fill: tones.base.fill,
           values: rows.map((row) => row.cumulativeReturn),
@@ -1071,7 +940,7 @@ function renderLegend(chartData) {
   elements.chartLegend.innerHTML = chartData.series
     .map(
       (series) => `
-        <button type="button" class="legend-chip ${hidden.has(series.key) ? "is-muted" : ""}" data-series-key="${series.key}">
+        <button type="button" aria-pressed="${!hidden.has(series.key)}" class="legend-chip ${hidden.has(series.key) ? "is-muted" : ""}" data-series-key="${series.key}">
           <span class="legend-dot" style="background:${series.color}"></span>
           <span>${series.label}</span>
         </button>
@@ -1089,11 +958,11 @@ function buildTooltipContent(index) {
       return `
         <h3>${label}</h3>
         <dl>
-          <dt>组合累计收益率</dt>
+          <dt>投入收益比（非年化）</dt>
           <dd>${formatPercent(row.cumulativeReturn)}</dd>
           <dt>${state.projection.backtest.shortLabel}累计涨幅</dt>
           <dd>${formatPercent(row.benchmarkGrowth - 1)}</dd>
-          <dt>当年市场回报</dt>
+          <dt>期间市场回报</dt>
           <dd>${index === 0 ? "--" : formatPercent(row.annualMarketReturn)}</dd>
           <dt>组合总资产</dt>
           <dd>${formatCurrency(row.endBalance)}</dd>
@@ -1136,7 +1005,7 @@ function buildTooltipContent(index) {
   if (index > 0) {
     details.splice(2, 0, ["本年投入", formatCurrency(row.annualContribution)]);
     details.splice(4, 0, ["本年收益", formatCurrency(row.annualInterest)]);
-    details.splice(5, 0, ["年度回报", formatPercent(row.annualMarketReturn)]);
+    details.splice(5, 0, ["期间回报", formatPercent(row.annualMarketReturn)]);
   }
 
   return `
@@ -1203,7 +1072,7 @@ function updateChartFocus(index, pointerX, pointerY) {
   elements.chartTooltip.innerHTML = buildTooltipContent(index);
   elements.chartTooltip.hidden = false;
   placeTooltip(pointerX, pointerY);
-  highlightTableRow(index);
+  highlightTableRow(state.projection.base.rows[index].year);
 }
 
 function clearChartFocus() {
@@ -1214,6 +1083,10 @@ function clearChartFocus() {
 
   elements.chartTooltip.hidden = true;
   highlightTableRow(-1);
+}
+
+function chartTargetAmount() {
+  return state.goalAnalysis.targetAmount * (state.inputs.targetBasis === 'real' ? state.projection.base.finalRow.inflationFactor : 1);
 }
 
 function renderChart() {
@@ -1231,8 +1104,8 @@ function renderChart() {
   const pointsCount = chartData.rows.length;
   const xScale = (index) => left + (plotWidth * index) / Math.max(pointsCount - 1, 1);
   const allValues = visibleSeries.flatMap((series) => series.values);
-  if (chartData.mode === "breakdown" && state.goalAnalysis?.targetAmount > 0) {
-    allValues.push(state.goalAnalysis.targetAmount);
+  if (state.inputs.showTargetLine && chartData.mode === "breakdown" && state.goalAnalysis?.targetAmount > 0) {
+    allValues.push(chartTargetAmount());
   }
   const rawMin = Math.min(0, ...allValues);
   const rawMax = Math.max(0, ...allValues);
@@ -1286,8 +1159,8 @@ function renderChart() {
     })
   );
 
-  if (chartData.mode === "breakdown" && state.goalAnalysis?.targetAmount > 0) {
-    const targetY = yScale(state.goalAnalysis.targetAmount);
+  if (state.inputs.showTargetLine && chartData.mode === "breakdown" && state.goalAnalysis?.targetAmount > 0) {
+    const targetY = yScale(chartTargetAmount());
     root.appendChild(
       createSvgElement("line", {
         class: "target-line",
@@ -1304,11 +1177,11 @@ function renderChart() {
       y: targetY - 8,
       "text-anchor": "end",
     });
-    targetLabel.textContent = `目标 ${formatCompactCurrency(state.goalAnalysis.targetAmount)}`;
+    targetLabel.textContent = `期末名义目标 ${formatCompactCurrency(chartTargetAmount())}`;
     root.appendChild(targetLabel);
 
-    if (state.goalAnalysis.goalHitRow && state.goalAnalysis.goalHitRow.year < pointsCount) {
-      const hitX = xScale(state.goalAnalysis.goalHitRow.year);
+    if (state.goalAnalysis.goalHitRow && chartData.rows.indexOf(state.goalAnalysis.goalHitRow) >= 0 && chartData.rows.indexOf(state.goalAnalysis.goalHitRow) < pointsCount) {
+      const hitX = xScale(chartData.rows.indexOf(state.goalAnalysis.goalHitRow));
       root.appendChild(
         createSvgElement("circle", {
           class: "target-point",
@@ -1428,7 +1301,7 @@ function renderChart() {
 
   renderLegend(chartData);
   if (state.inputs.chartMode === "comparison") {
-    elements.chartModeHint.textContent = state.projection.mode === "backtest" ? "当前视图：累计涨幅对比" : "当前视图：情景对比";
+    elements.chartModeHint.textContent = state.projection.mode === "backtest" ? "当前视图：标的涨幅与投入收益比（口径不同）" : "当前视图：情景对比";
   } else {
     elements.chartModeHint.textContent = "当前视图：资产拆解";
   }
@@ -1449,13 +1322,17 @@ function updateProjection() {
   renderTable();
   renderChart();
   clearChartFocus();
+  const invalid = [...elements.form.querySelectorAll('input[type="number"]')].find(input => !input.readOnly && (!input.value || !input.validity.valid));
+  elements.formStatus.textContent = invalid ? '正在编辑或输入超出范围；计算使用有效数值，离开输入框后规范化。' : '';
+  saveCurrentInputs();
 }
 
 function resetAll() {
   Object.entries(defaults).forEach(([key, value]) => {
     const field = elements[key];
     if (field) {
-      field.value = String(value);
+      if (field.type === "checkbox") field.checked = value;
+      else field.value = String(value);
     }
   });
 
@@ -1464,6 +1341,7 @@ function resetAll() {
     const activeValue = hiddenField ? hiddenField.value : "";
     group.querySelectorAll(".pill").forEach((pill) => {
       pill.classList.toggle("is-active", pill.dataset.value === activeValue);
+      pill.setAttribute("aria-pressed", String(pill.dataset.value === activeValue));
     });
   });
 
@@ -1471,7 +1349,7 @@ function resetAll() {
 }
 
 function exportCsv() {
-  const headers = ["年份", "年初资产", "本年投入", "累计本金", "本年收益", "年度回报", "累计收益", "年末总资产", "实际购买力", "实际累计收益", "累计收益率"];
+  const headers = ["年份", "年初资产", "本年投入", "累计本金", "本年收益", "期间回报", "累计收益", "年末总资产", "实际购买力", "实际累计收益", "累计收益率"];
   const lines = state.projection.base.rows.slice(1).map((row) =>
     [
       row.calendarYear || row.year,
@@ -1488,7 +1366,15 @@ function exportCsv() {
     ].join(",")
   );
 
-  const csvContent = `\uFEFF${headers.join(",")}\n${lines.join("\n")}`;
+  const metadata = [
+    ['导出参数', '值'], ...Object.entries(state.inputs),
+    ['回测来源', state.projection.backtest?.monthly ? 'Yahoo Finance / 美元指数价格回报，不含分红及汇率' : state.projection.mode === 'backtest' ? '内置年度示例，等效月收益近似，来源未核验' : '固定年化假设'],
+    ['行情抓取时间', state.projection.backtest?.updatedAt || '不适用'],
+    ['实际回测起止', state.projection.backtest ? `${state.projection.backtest.startYear}—${state.projection.backtest.endYear}` : '不适用'],
+    ['资金加权年化收益率', state.projection.base.moneyWeightedReturn === null ? '不适用' : formatPercent(state.projection.base.moneyWeightedReturn)],
+    ['收益口径', '累计收益率是累计收益/累计投入，不是年化或时间加权回报'],
+  ].map(row => row.map(value => '"' + String(value).replaceAll('"', '""') + '"').join(',')).join('\n');
+  const csvContent = `\uFEFF${headers.join(",")}\n${lines.join("\n")}\n\n${metadata}`;
   const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
   const link = document.createElement("a");
   const objectUrl = URL.createObjectURL(blob);
@@ -1523,10 +1409,12 @@ function bindPillGroups() {
 
     group.querySelectorAll(".pill").forEach((pill) => {
       pill.classList.toggle("is-active", pill.dataset.value === hiddenField.value);
+      pill.setAttribute("aria-pressed", String(pill.dataset.value === hiddenField.value));
       pill.addEventListener("click", () => {
         hiddenField.value = pill.dataset.value;
         group.querySelectorAll(".pill").forEach((button) => {
           button.classList.toggle("is-active", button === pill);
+          button.setAttribute("aria-pressed", String(button === pill));
         });
         updateProjection();
       });
@@ -1558,12 +1446,32 @@ function bindLegend() {
 }
 
 function bindForm() {
+  elements.form.addEventListener('submit', event => event.preventDefault());
+  elements.form.querySelectorAll('input[type="month"]').forEach(input => input.addEventListener('change', updateProjection));
+  elements.showTargetLine.addEventListener('change', updateProjection);
+  elements.refreshData.addEventListener('click', () => loadMarketData(true));
+  elements.savePlan.addEventListener('click', savePlan);
+  elements.sharePlan.addEventListener('click', sharePlan);
+  elements.chartSurface.addEventListener('keydown', event => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Escape'].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === 'Escape') return clearChartFocus();
+    const count = state.chartGeometry.pointsCount;
+    state.focusIndex = event.key === 'Home' ? 0 : event.key === 'End' ? count - 1 : clamp(state.focusIndex + (event.key === 'ArrowRight' ? 1 : -1), 0, count - 1);
+    updateChartFocus(state.focusIndex, state.chartGeometry.xScale(state.focusIndex), 50);
+  });
   elements.form.querySelectorAll('input[type="number"]').forEach((input) => {
     input.addEventListener("input", updateProjection);
+    input.addEventListener('blur', () => {
+      updateProjection();
+      const value = state.inputs[input.id];
+      if (value !== undefined) input.value = String(value);
+      updateProjection();
+    });
   });
 
   elements.form.querySelectorAll("select").forEach((select) => {
-    select.addEventListener("change", updateProjection);
+    select.addEventListener("change", () => { updateProjection(); renderDataStatus(); });
   });
 
   elements.resetButton.addEventListener("click", resetAll);
@@ -1601,8 +1509,13 @@ function bindResize() {
   observer.observe(elements.chartSurface);
 }
 
+syncBacktestControls();
+restoreInputs();
 bindPillGroups();
 bindLegend();
 bindForm();
 bindResize();
 updateProjection();
+
+renderPlans();
+loadMarketData();

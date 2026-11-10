@@ -34,7 +34,7 @@
 
           <label class="field">
             <span>投资本金（元）</span>
-            <input id="initialAmount" name="initialAmount" type="number" min="0" step="1000" value="100000" />
+            <input id="initialAmount" name="initialAmount" type="number" min="0" max="1000000000000" step="1" value="100000" />
           </label>
 
           <label class="field">
@@ -44,7 +44,7 @@
 
           <label class="field">
             <span>单次定投金额（元）</span>
-            <input id="contributionAmount" name="contributionAmount" type="number" min="0" step="100" value="2000" />
+            <input id="contributionAmount" name="contributionAmount" type="number" min="0" max="1000000000000" step="1" value="2000" />
           </label>
 
           <div class="field">
@@ -56,6 +56,15 @@
             <input id="contributionFrequency" name="contributionFrequency" type="hidden" value="monthly" />
           </div>
 
+          <div class="field">
+            <span>定投时点</span>
+            <div class="pill-group" data-group="contributionTiming">
+              <button type="button" class="pill is-active" data-value="start">期初投入</button>
+              <button type="button" class="pill" data-value="end">期末投入</button>
+            </div>
+            <input id="contributionTiming" name="contributionTiming" type="hidden" value="start" />
+          </div>
+
           <div class="mode-section" data-mode-section="projection">
             <label class="field">
               <span>预计年化收益率（%）</span>
@@ -63,15 +72,6 @@
             </label>
 
             <div class="advanced-grid">
-              <div class="field">
-                <span>定投时点</span>
-                <div class="pill-group" data-group="contributionTiming">
-                  <button type="button" class="pill is-active" data-value="start">期初投入</button>
-                  <button type="button" class="pill" data-value="end">期末投入</button>
-                </div>
-                <input id="contributionTiming" name="contributionTiming" type="hidden" value="start" />
-              </div>
-
               <label class="field">
                 <span>情景波动区间（±%）</span>
                 <input id="scenarioSpread" name="scenarioSpread" type="number" min="0" max="15" step="0.1" value="2" />
@@ -90,12 +90,22 @@
                 </select>
               </label>
 
-              <label class="field">
+              <label class="field" id="annualRange">
                 <span>回测起点</span>
                 <select id="backtestStartYear" name="backtestStartYear"></select>
               </label>
             </div>
 
+            <label class="field">
+              <span>回测数据精度</span>
+              <select id="backtestPrecision"><option value="monthly">真实月度行情（标普 / 纳指）</option><option value="annual">内置年度示例（近似）</option></select>
+            </label>
+            <div id="monthlyRange" class="advanced-grid" hidden>
+              <label class="field"><span>起始投资月份</span><input id="backtestStartMonth" type="month" /></label>
+              <label class="field"><span>结束投资月份</span><input id="backtestEndMonth" type="month" /></label>
+            </div>
+            <button type="button" id="refreshData" class="text-button">刷新已发布行情</button>
+            <p class="mode-note" id="dataStatus" role="status"></p>
             <p class="mode-note" id="backtestRangeHint">
               将基于内置年度收益样本，按所选起点与投资年限进行历史路径回放。
             </p>
@@ -104,7 +114,7 @@
           <div class="advanced-grid">
             <label class="field">
               <span>目标总资产（元）</span>
-              <input id="targetAmount" name="targetAmount" type="number" min="0" step="10000" value="3000000" />
+              <input id="targetAmount" name="targetAmount" type="number" min="0" max="1000000000000000" step="1" value="3000000" />
             </label>
 
             <label class="field">
@@ -113,6 +123,8 @@
             </label>
           </div>
 
+          <label class="field"><span>目标金额口径</span><select id="targetBasis"><option value="nominal">未来名义金额</option><option value="real">今天的购买力</option></select></label>
+          <p id="formStatus" class="mode-note" role="status"></p>
           <div class="assumption-note">
             <p id="assumptionTitle">计算假设</p>
             <ul id="assumptionList">
@@ -156,6 +168,7 @@
             <strong id="metricInflationDrag">¥0</strong>
             <small id="metricInflationCaption">名义终值 - 实际购买力</small>
           </article>
+          <article class="metric-card"><span class="metric-label">资金加权年化收益率</span><strong id="metricAnnualReturn">—</strong><small>按实际投入月份计算 IRR，不等同于指数年化</small></article>
         </section>
 
         <section class="panel-card goal-card">
@@ -208,6 +221,7 @@
             </div>
 
             <div class="chart-controls">
+              <label class="checkbox-field"><input type="checkbox" id="showTargetLine" checked />显示期末目标线</label>
               <div class="pill-group compact" data-group="chartMode">
                 <button type="button" class="pill is-active" data-value="breakdown">资产拆解</button>
                 <button id="chartComparisonButton" type="button" class="pill" data-value="comparison">情景对比</button>
@@ -220,13 +234,13 @@
 
           <div class="legend-row" id="chartLegend" aria-label="图表图例"></div>
 
-          <div class="chart-surface" id="chartSurface">
+          <div class="chart-surface" id="chartSurface" tabindex="0" role="group" aria-label="投资图表，左右方向键查看，Home 和 End 跳转，Escape 关闭提示">
             <svg id="projectionChart" role="img" aria-label="投资资产变化图表"></svg>
-            <div class="chart-tooltip" id="chartTooltip" hidden></div>
+            <div class="chart-tooltip" id="chartTooltip" aria-live="polite" hidden></div>
           </div>
 
           <div class="chart-footer">
-            <span>悬停曲线查看对应年份的详细数值</span>
+            <span>悬停、触摸或使用左右方向键查看各期数值</span>
             <span id="chartModeHint">当前视图：资产拆解</span>
           </div>
         </section>
@@ -260,7 +274,7 @@
                   <th>本年投入</th>
                   <th>累计本金</th>
                   <th>本年收益</th>
-                  <th>年度回报</th>
+                  <th>期间回报</th>
                   <th>累计收益</th>
                   <th>年末总资产</th>
                   <th>实际购买力</th>
@@ -272,9 +286,24 @@
             </table>
           </div>
         </section>
+        <section class="panel-card table-card">
+          <div class="table-header"><div><p class="eyebrow">Scenarios</p><h2>保存与比较方案</h2></div></div>
+          <div class="plan-toolbar">
+            <label class="field"><span>方案名称</span><input id="planName" type="text" maxlength="40" placeholder="例如：每月多投 500 元" /></label>
+            <button id="savePlan" class="text-button solid-button" type="button">保存当前方案</button>
+            <button id="sharePlan" class="text-button" type="button">复制分享链接</button>
+          </div>
+          <p class="mode-note">最多保存 4 个方案，仅存于此浏览器。比较时请保持期限、投入与数据口径一致；分享链接包含参数，不包含个人信息或保存列表。</p>
+          <p id="planStatus" role="status" class="mode-note"></p>
+          <input id="shareUrl" aria-label="方案分享链接" type="text" readonly hidden />
+          <div id="planList" class="insights-grid"></div>
+        </section>
       </main>
     </div>
 
+    <script src="engine.js"></script>
+    <script src="historical-data.js"></script>
+    <script src="app-extras.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
