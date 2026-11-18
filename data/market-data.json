@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-17T09:41:08.744270+00:00",
+  "updatedAt": "2026-11-18T09:00:07.989441+00:00",
   "datasets": {
     "sp500": {
       "symbol": "^GSPC",
